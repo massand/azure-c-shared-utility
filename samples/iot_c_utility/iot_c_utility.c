@@ -2,7 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #include "stdio.h"
-#include "azure_c_shared_utility/agenttime.h"
+/*#include "azure_c_shared_utility/agenttime.h"
 #include "azure_c_shared_utility/gballoc.h"
 #include "azure_c_shared_utility/http_proxy_io.h"
 #include "azure_c_shared_utility/map.h"
@@ -12,10 +12,10 @@
 #include "azure_c_shared_utility/strings.h"
 #include "azure_c_shared_utility/urlencode.h"
 #include "azure_c_shared_utility/xlogging.h"
-#include "azure_c_shared_utility/httpapiex.h"
+#include "azure_c_shared_utility/httpapiex.h"*/
 #include "azure_c_shared_utility/sha.h"
 
-#ifdef USE_HTTP
+/*#ifdef USE_HTTP
 static void test_http_proxy_io()
 {
     const IO_INTERFACE_DESCRIPTION* interface_desc = http_proxy_io_get_interface_description();
@@ -60,7 +60,7 @@ static void show_platform_info()
         (void)printf("%s\r\n", STRING_c_str(platform_info));
         STRING_delete(platform_info);
     }
-}
+}*/
 
 static void test_sha(void)
 {
