@@ -13,6 +13,7 @@
 #include "azure_c_shared_utility/urlencode.h"
 #include "azure_c_shared_utility/xlogging.h"
 #include "azure_c_shared_utility/httpapiex.h"
+#include "azure_c_shared_utility/sha.h"
 
 #ifdef USE_HTTP
 static void test_http_proxy_io()
@@ -61,11 +62,39 @@ static void show_platform_info()
     }
 }
 
+static void test_sha(void)
+{
+    SHA256Context sha_ctx;
+    uint8_t bytes[8];
+    unsigned int count = 8;
+    //uint8_t msg_bits = 111;
+    //uint8_t Message_Digest[SHA256HashSize];
+
+    klee_make_symbolic(&sha_ctx, sizeof(sha_ctx), "Sha_context");
+
+    //act
+    if (SHA256Reset(&sha_ctx) == 0)
+    {
+        if (SHA256Input(&sha_ctx, bytes, count) == 0)
+        {
+            /*if (SHA256FinalBits(&sha_ctx, msg_bits, 1) == 0)
+            {
+                if (SHA256Result(&sha_ctx, Message_Digest) == 0)
+                {
+                    (void)printf("Complete\r\n");
+                }
+            }*/
+        }
+    }
+}
+
 int main(int argc, char** argv)
 {
     (void)argc, (void)argv;
 
-    if (platform_init() != 0)
+    test_sha();
+
+    /*if (platform_init() != 0)
     {
         LogError("Cannot initialize platform.\n");
     }
@@ -78,6 +107,6 @@ int main(int argc, char** argv)
         test_http_proxy_io();
 #endif
         platform_deinit();
-    }
+    }*/
     return 0;
 }
