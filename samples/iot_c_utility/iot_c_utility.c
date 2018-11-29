@@ -14,6 +14,7 @@
 #include "azure_c_shared_utility/xlogging.h"
 #include "azure_c_shared_utility/httpapiex.h"*/
 #include "azure_c_shared_utility/sha.h"
+#include "klee.h"
 
 /*#ifdef USE_HTTP
 static void test_http_proxy_io()
