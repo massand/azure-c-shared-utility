@@ -19,6 +19,8 @@
 #include "azure_c_shared_utility/shared_util_options.h"
 #include "azure_c_shared_utility/xlogging.h"
 
+#include "ares.h"
+
 typedef enum IO_STATE_TAG
 {
     IO_STATE_CLOSED,
@@ -42,14 +44,19 @@ typedef struct SOCKET_IO_INSTANCE_TAG
     SOCKETIO_ADDRESS_TYPE address_type;
     ON_BYTES_RECEIVED on_bytes_received;
     ON_IO_ERROR on_io_error;
+    ON_IO_OPEN_COMPLETE on_io_open_complete;
     void* on_bytes_received_context;
     void* on_io_error_context;
+    void* on_io_open_complete_context;
     char* hostname;
     int port;
     IO_STATE io_state;
+    void* resolver;
+    ADDRINFO* addrInfo;
     SINGLYLINKEDLIST_HANDLE pending_io_list;
     struct tcp_keepalive keep_alive;
     unsigned char recv_bytes[RECEIVE_BYTES_VALUE];
+    
 } SOCKET_IO_INSTANCE;
 
 /*this function will clone an option given by name and value*/
@@ -146,6 +153,127 @@ static int add_pending_io(SOCKET_IO_INSTANCE* socket_io_instance, const unsigned
     return result;
 }
 
+static int connect_socket(SOCKET socket, struct sockaddr* addr, size_t len)
+{
+    int result;
+    u_long iMode = 1;
+
+    if (connect(socket, addr, (int)len) != 0)
+    {
+        LogError("Failure: connect failure %d.", WSAGetLastError());
+        result = __FAILURE__;
+    }
+    else if (ioctlsocket(socket, FIONBIO, &iMode) != 0)
+    {
+        LogError("Failure: ioctlsocket failure %d.", WSAGetLastError());
+        result = __FAILURE__;
+    }
+    else
+    {
+        result = 0;
+    }
+
+    return result;
+}
+
+static void query_completed_cb(void *arg,  /* (struct connectdata *) */
+    int status,
+    int timeouts,
+    struct hostent *he)
+{
+    int i;
+    char *curr;
+    ADDRINFO *ai;
+    ADDRINFO *firstai = NULL;
+    ADDRINFO *prevai = NULL;
+    struct sockaddr_in *addr;
+    
+    SOCKET_IO_INSTANCE *socket_io_instance = (SOCKET_IO_INSTANCE *)arg;
+    (void)status;
+    (void)timeouts;
+    socket_io_instance->io_state = IO_STATE_OPEN;
+    
+    socket_io_instance->addrInfo = calloc(1, sizeof(ADDRINFO));
+    socket_io_instance->addrInfo->ai_addr = calloc(1, sizeof(struct sockaddr_in));
+    
+    for (i = 0; (curr = he->h_addr_list[i]) != NULL && i < 1; i++) {
+
+        size_t ss_size;
+#ifdef ENABLE_IPV6
+        if (he->h_addrtype == AF_INET6)
+            ss_size = sizeof(struct sockaddr_in6);
+        else
+#endif
+            ss_size = sizeof(struct sockaddr_in);
+
+        ai = calloc(1, sizeof(ADDRINFO));
+        if (!ai) {
+            break;
+        }
+        ai->ai_canonname = _strdup(he->h_name);
+        if (!ai->ai_canonname) {
+            free(ai);
+            break;
+        }
+        ai->ai_addr = calloc(1, ss_size);
+        if (!ai->ai_addr) {
+            free(ai->ai_canonname);
+            free(ai);
+            break;
+        }
+
+        if (!firstai)
+            /* store the pointer we want to return from this function */
+            firstai = ai;
+
+        if (prevai)
+            /* make the previous entry point to this */
+            prevai->ai_next = ai;
+
+        ai->ai_family = he->h_addrtype;
+
+        /* we return all names as STREAM, so when using this address for TFTP
+           the type must be ignored and conn->socktype be used instead! */
+        ai->ai_socktype = SOCK_STREAM;
+
+        ai->ai_addrlen = (socklen_t)ss_size;
+
+        /* leave the rest of the struct filled with zero */
+
+        switch (ai->ai_family) {
+        case AF_INET:
+            addr = (void *)ai->ai_addr; /* storage area for this info */
+
+            memcpy(&addr->sin_addr, curr, sizeof(struct in_addr));
+            addr->sin_family = (ADDRESS_FAMILY)(he->h_addrtype);
+            addr->sin_port = htons((unsigned short)socket_io_instance->port);
+            break;
+
+#ifdef ENABLE_IPV6
+        case AF_INET6:
+            addr6 = (void *)ai->ai_addr; /* storage area for this info */
+
+            memcpy(&addr6->sin6_addr, curr, sizeof(struct in6_addr));
+            addr6->sin6_family = (CURL_SA_FAMILY_T)(he->h_addrtype);
+            addr6->sin6_port = htons((unsigned short)port);
+            break;
+#endif
+        }
+
+        prevai = ai;
+    }
+
+    memcpy((socket_io_instance->addrInfo)->ai_addr, firstai->ai_addr, sizeof(firstai->ai_addr));
+    connect_socket(socket_io_instance->socket, (socket_io_instance->addrInfo)->ai_addr, sizeof(*((socket_io_instance->addrInfo)->ai_addr)));
+    
+    if (socket_io_instance->on_io_open_complete != NULL)
+    {
+        socket_io_instance->on_io_open_complete(socket_io_instance->on_io_open_complete_context, IO_OPEN_OK /*: IO_OPEN_ERROR*/);
+    }
+
+
+}
+
 CONCRETE_IO_HANDLE socketio_create(void* io_create_parameters)
 {
     SOCKETIO_CONFIG* socket_io_config = (SOCKETIO_CONFIG*)io_create_parameters;
@@ -202,9 +330,11 @@ CONCRETE_IO_HANDLE socketio_create(void* io_create_parameters)
                     result->on_io_error = NULL;
                     result->on_bytes_received_context = NULL;
                     result->on_io_error_context = NULL;
+                    result->on_io_open_complete = NULL;
                     result->io_state = IO_STATE_CLOSED;
                     result->keep_alive = tcp_keepalive;
-
+                    result->resolver = NULL;
+                    result->addrInfo = NULL;
                 }
             }
         }
@@ -247,45 +377,34 @@ void socketio_destroy(CONCRETE_IO_HANDLE socket_io)
             free(socket_io_instance->hostname);
         }
 
+        ares_library_cleanup(); 
+
         free(socket_io);
     }
 }
 
-static int connect_socket(SOCKET socket, struct sockaddr* addr, size_t len)
+
+static int initialize_resolver(void **resolver)
 {
     int result;
-    u_long iMode = 1;
 
-    if (connect(socket, addr, (int)len) != 0)
-    {
-        LogError("Failure: connect failure %d.", WSAGetLastError());
-        result = __FAILURE__;
-    }
-    else if (ioctlsocket(socket, FIONBIO, &iMode) != 0)
-    {
-        LogError("Failure: ioctlsocket failure %d.", WSAGetLastError());
-        result = __FAILURE__;
-    }
-    else
-    {
-        result = 0;
-    }
+    result = ares_init((ares_channel *)resolver);
 
     return result;
 }
 
 static int lookup_address_and_initiate_socket_connection(SOCKET_IO_INSTANCE* socket_io_instance)
 {
-    int result;
+    int result = 0;
 
 #ifdef AF_UNIX_ON_WINDOWS
     if (socket_io_instance->address_type == ADDRESS_TYPE_IP)
     {
 #endif
         char portString[16];
-        ADDRINFO* addr_info = NULL;
+        //ADDRINFO* addr_info = NULL;
         ADDRINFO addrHint = { 0 };
-        addrHint.ai_family = AF_INET;
+        addrHint.ai_family = socket_io_instance->address_type;
         addrHint.ai_socktype = SOCK_STREAM;
         addrHint.ai_protocol = 0;
 
@@ -294,15 +413,29 @@ static int lookup_address_and_initiate_socket_connection(SOCKET_IO_INSTANCE* soc
             LogError("Failure: sprintf failed to encode the port.");
             result = __FAILURE__;
         }
-        else if (getaddrinfo(socket_io_instance->hostname, portString, &addrHint, &addr_info) != 0)
+        /*else if (getaddrinfo(socket_io_instance->hostname, portString, &addrHint, &addr_info) != 0)
         {
             LogError("Failure: getaddrinfo failure %d.", WSAGetLastError());
             result = __FAILURE__;
-        }
-        else
+        }*/
+        else if (socket_io_instance->io_state != IO_STATE_OPENING && ((socket_io_instance->addrInfo)) == NULL)
         {
-            result = connect_socket(socket_io_instance->socket, addr_info->ai_addr, sizeof(*addr_info->ai_addr));
-            freeaddrinfo(addr_info);
+            ares_library_init(ARES_LIB_INIT_WIN32);
+            
+            initialize_resolver(&socket_io_instance->resolver);
+
+            ares_gethostbyname((ares_channel)socket_io_instance->resolver, socket_io_instance->hostname, AF_INET, query_completed_cb, (void*)socket_io_instance);
+            socket_io_instance->io_state = IO_STATE_OPENING;
+        }
+        else if (socket_io_instance->io_state == IO_STATE_OPENING)
+        {
+            ares_socket_t socket;
+            ares_getsock((ares_channel)socket_io_instance->resolver, &socket, 1);
+            ares_process_fd((ares_channel)socket_io_instance->resolver, socket, socket);
+        }
+        else if(socket_io_instance->io_state == IO_STATE_OPEN)
+        {
+            result = connect_socket(socket_io_instance->socket, (socket_io_instance->addrInfo)->ai_addr, sizeof(*((socket_io_instance->addrInfo)->ai_addr)));
         }
 #ifdef AF_UNIX_ON_WINDOWS
     }
@@ -367,8 +500,11 @@ int socketio_open(CONCRETE_IO_HANDLE socket_io, ON_IO_OPEN_COMPLETE on_io_open_c
             socket_io_instance->on_bytes_received = on_bytes_received;
             socket_io_instance->on_io_error = on_io_error;
             socket_io_instance->on_io_error_context = on_io_error_context;
-
+            socket_io_instance->on_io_open_complete = on_io_open_complete;
+            socket_io_instance->on_io_open_complete_context = on_io_open_complete_context;
             socket_io_instance->io_state = IO_STATE_OPEN;
+
+            
 
             result = 0;
         }
@@ -399,17 +535,24 @@ int socketio_open(CONCRETE_IO_HANDLE socket_io, ON_IO_OPEN_COMPLETE on_io_open_c
                 socket_io_instance->on_io_error = on_io_error;
                 socket_io_instance->on_io_error_context = on_io_error_context;
 
-                socket_io_instance->io_state = IO_STATE_OPEN;
+                socket_io_instance->io_state = IO_STATE_OPENING;
 
                 result = 0;
             }
         }
     }
 
-    if (on_io_open_complete != NULL)
+    socket_io_instance->on_bytes_received_context = on_bytes_received_context;
+    socket_io_instance->on_bytes_received = on_bytes_received;
+    socket_io_instance->on_io_error = on_io_error;
+    socket_io_instance->on_io_error_context = on_io_error_context;
+    socket_io_instance->on_io_open_complete = on_io_open_complete;
+    socket_io_instance->on_io_open_complete_context = on_io_open_complete_context;
+
+    /*if (on_io_open_complete != NULL)
     {
         on_io_open_complete(on_io_open_complete_context, result == 0 ? IO_OPEN_OK : IO_OPEN_ERROR);
-    }
+    }*/
 
     return result;
 }
@@ -433,6 +576,9 @@ int socketio_close(CONCRETE_IO_HANDLE socket_io, ON_IO_CLOSE_COMPLETE on_io_clos
             (void)closesocket(socket_io_instance->socket);
             socket_io_instance->socket = INVALID_SOCKET;
             socket_io_instance->io_state = IO_STATE_CLOSED;
+
+            socket_io_instance->resolver = NULL;
+            //freeaddrinfo(&((socket_io_instance->addrInfo)->ai_addr));
         }
         if (on_io_close_complete != NULL)
         {
@@ -606,6 +752,23 @@ void socketio_dowork(CONCRETE_IO_HANDLE socket_io)
                     }
                 } while (received > 0 && socket_io_instance->io_state == IO_STATE_OPEN);
             }
+        }
+        else
+        {
+            if (lookup_address_and_initiate_socket_connection(socket_io_instance) != 0)
+            {
+                LogError("lookup_address_and_connect_socket failed");
+                (void)closesocket(socket_io_instance->socket);
+                socket_io_instance->socket = INVALID_SOCKET;
+            }
+            //else if(socket_io_instance->io_state == IO_STATE_OPEN)
+            //{
+            //    if (socket_io_instance->on_io_open_complete != NULL)
+            //    {
+            //        socket_io_instance->on_io_open_complete(socket_io_instance->on_io_open_complete_context, IO_OPEN_OK /*: IO_OPEN_ERROR*/);
+            //    }
+
+            //}
         }
     }
 }
