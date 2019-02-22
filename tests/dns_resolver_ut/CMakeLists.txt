@@ -10,7 +10,7 @@ ${theseTestsName}.c
 )
 
 set(${theseTestsName}_c_files
-../../pal/dns_resolver_sync.c
+../../src/dns_resolver_sync.c
 ../../src/crt_abstractions.c
 )
 
@@ -18,7 +18,7 @@ set(${theseTestsName}_h_files
 )
 
 include_directories(.)
-include_directories(../../pal/inc)
+include_directories(../../inc/azure_c_shared_utility)
 
 if(WIN32)
 	include_directories(./win32_fake_linux)

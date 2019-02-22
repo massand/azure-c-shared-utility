@@ -10,7 +10,7 @@
 // in the project
 #include "socket_async_os.h"
 
-#include "dns_resolver.h"
+#include "azure_c_shared_utility/dns_resolver.h"
 #include "azure_c_shared_utility/gballoc.h"
 #include "azure_c_shared_utility/crt_abstractions.h"
 #include "azure_c_shared_utility/xlogging.h"
