@@ -10,7 +10,7 @@
 // in the project
 #include "socket_async_os.h"
 
-#include "dns_async.h"
+#include "dns_resolver.h"
 #include "azure_c_shared_utility/gballoc.h"
 #include "azure_c_shared_utility/crt_abstractions.h"
 #include "azure_c_shared_utility/xlogging.h"
@@ -30,25 +30,25 @@ typedef struct
     uint32_t ip_v4;
     bool is_complete;
     bool is_failed;
-} DNS_ASYNC_INSTANCE;
+} DNSRESOLVER_INSTANCE;
 
-DNS_ASYNC_HANDLE dns_async_create(const char* hostname, DNS_ASYNC_OPTIONS* options)
+DNSRESOLVER_HANDLE dns_resolver_create(const char* hostname, DNSRESOLVER_OPTIONS* options)
 {
-    /* Codes_SRS_DNS_ASYNC_30_012: [ The optional options parameter shall be ignored. ]*/
-    DNS_ASYNC_INSTANCE* result;
+    /* Codes_SRS_dns_resolver_30_012: [ The optional options parameter shall be ignored. ]*/
+    DNSRESOLVER_INSTANCE* result;
     (void)options;
     if (hostname == NULL)
     {
-        /* Codes_SRS_DNS_ASYNC_30_011: [ If the hostname parameter is NULL, dns_async_create shall log an error and return NULL. ]*/
+        /* Codes_SRS_dns_resolver_30_011: [ If the hostname parameter is NULL, dns_resolver_create shall log an error and return NULL. ]*/
         LogError("NULL hostname");
         result = NULL;
     }
     else
     {
-        result = malloc(sizeof(DNS_ASYNC_INSTANCE));
+        result = malloc(sizeof(DNSRESOLVER_INSTANCE));
         if (result == NULL)
         {
-            /* Codes_SRS_DNS_ASYNC_30_014: [ On any failure, dns_async_create shall log an error and return NULL. ]*/
+            /* Codes_SRS_dns_resolver_30_014: [ On any failure, dns_resolver_create shall log an error and return NULL. ]*/
             LogError("malloc instance failed");
             result = NULL;
         }
@@ -58,11 +58,11 @@ DNS_ASYNC_HANDLE dns_async_create(const char* hostname, DNS_ASYNC_OPTIONS* optio
             result->is_complete = false;
             result->is_failed = false;
             result->ip_v4 = 0;
-            /* Codes_SRS_DNS_ASYNC_30_010: [ dns_async_create shall make a copy of the hostname parameter to allow immediate deletion by the caller. ]*/
+            /* Codes_SRS_dns_resolver_30_010: [ dns_resolver_create shall make a copy of the hostname parameter to allow immediate deletion by the caller. ]*/
             ms_result = mallocAndStrcpy_s(&result->hostname, hostname);
             if (ms_result != 0)
             {
-                /* Codes_SRS_DNS_ASYNC_30_014: [ On any failure, dns_async_create shall log an error and return NULL. ]*/
+                /* Codes_SRS_dns_resolver_30_014: [ On any failure, dns_resolver_create shall log an error and return NULL. ]*/
                 free(result);
                 result = NULL;
             }
@@ -71,15 +71,15 @@ DNS_ASYNC_HANDLE dns_async_create(const char* hostname, DNS_ASYNC_OPTIONS* optio
     return result;
 }
 
-/* Codes_SRS_DNS_ASYNC_30_021: [ dns_async_is_create_complete shall perform the asynchronous work of DNS lookup and log any errors. ]*/
-bool dns_async_is_lookup_complete(DNS_ASYNC_HANDLE dns_in)
+/* Codes_SRS_dns_resolver_30_021: [ dns_resolver_is_create_complete shall perform the asynchronous work of DNS lookup and log any errors. ]*/
+bool dns_resolver_is_lookup_complete(DNSRESOLVER_HANDLE dns_in)
 {
-    DNS_ASYNC_INSTANCE* dns = (DNS_ASYNC_INSTANCE*)dns_in;
+    DNSRESOLVER_INSTANCE* dns = (DNSRESOLVER_INSTANCE*)dns_in;
 
     bool result;
     if (dns == NULL)
     {
-        /* Codes_SRS_DNS_ASYNC_30_020: [ If the dns parameter is NULL, dns_async_is_create_complete shall log an error and return false. ]*/
+        /* Codes_SRS_dns_resolver_30_020: [ If the dns parameter is NULL, dns_resolver_is_create_complete shall log an error and return false. ]*/
         LogError("NULL dns");
         result = false;
     }
@@ -87,7 +87,7 @@ bool dns_async_is_lookup_complete(DNS_ASYNC_HANDLE dns_in)
     {
         if (dns->is_complete)
         {
-            /* Codes_SRS_DNS_ASYNC_30_024: [ If dns_async_is_create_complete has previously returned true, dns_async_is_create_complete shall do nothing and return true. ]*/
+            /* Codes_SRS_dns_resolver_30_024: [ If dns_resolver_is_create_complete has previously returned true, dns_resolver_is_create_complete shall do nothing and return true. ]*/
             result = true;
         }
         else
@@ -97,7 +97,7 @@ bool dns_async_is_lookup_complete(DNS_ASYNC_HANDLE dns_in)
             struct addrinfo hints;
             int getAddrResult;
 
-            /* Codes_SRS_DNS_ASYNC_30_021: [ dns_async_is_create_complete shall perform the asynchronous work of DNS lookup and log any errors. ]*/
+            /* Codes_SRS_dns_resolver_30_021: [ dns_resolver_is_create_complete shall perform the asynchronous work of DNS lookup and log any errors. ]*/
             // Only make one attempt at lookup for this
             // synchronous implementation
             dns->is_complete = true;
@@ -124,24 +124,24 @@ bool dns_async_is_lookup_complete(DNS_ASYNC_HANDLE dns_in)
                     switch (ptr->ai_family)
                     {
                     case AF_INET:
-                        /* Codes_SRS_DNS_ASYNC_30_032: [ If dns_async_is_create_complete has returned true and the lookup process has succeeded, dns_async_get_ipv4 shall return the discovered IPv4 address. ]*/
+                        /* Codes_SRS_dns_resolver_30_032: [ If dns_resolver_is_create_complete has returned true and the lookup process has succeeded, dns_resolver_get_ipv4 shall return the discovered IPv4 address. ]*/
                         dns->ip_v4 = EXTRACT_IPV4(ptr);
                         break;
                     }
                 }
-                /* Codes_SRS_DNS_ASYNC_30_033: [ If dns_async_is_create_complete has returned true and the lookup process has failed, dns_async_get_ipv4 shall return 0. ]*/
+                /* Codes_SRS_dns_resolver_30_033: [ If dns_resolver_is_create_complete has returned true and the lookup process has failed, dns_resolver_get_ipv4 shall return 0. ]*/
                 dns->is_failed = (dns->ip_v4 == 0);
                 freeaddrinfo(addrInfo);
             }
             else
             {
-                /* Codes_SRS_DNS_ASYNC_30_033: [ If dns_async_is_create_complete has returned true and the lookup process has failed, dns_async_get_ipv4 shall return 0. ]*/
+                /* Codes_SRS_dns_resolver_30_033: [ If dns_resolver_is_create_complete has returned true and the lookup process has failed, dns_resolver_get_ipv4 shall return 0. ]*/
                 LogInfo("Failed DNS lookup for %s: %d", dns->hostname, getAddrResult);
                 dns->is_failed = true;
             }
-            // This synchronous implementation is incapable of being incomplete, so SRS_DNS_ASYNC_30_023 does not ever happen
-            /* Codes_SRS_DNS_ASYNC_30_023: [ If the DNS lookup process is not yet complete, dns_async_is_create_complete shall return false. ]*/
-            /* Codes_SRS_DNS_ASYNC_30_022: [ If the DNS lookup process has completed, dns_async_is_create_complete shall return true. ]*/
+            // This synchronous implementation is incapable of being incomplete, so SRS_dns_resolver_30_023 does not ever happen
+            /* Codes_SRS_dns_resolver_30_023: [ If the DNS lookup process is not yet complete, dns_resolver_is_create_complete shall return false. ]*/
+            /* Codes_SRS_dns_resolver_30_022: [ If the DNS lookup process has completed, dns_resolver_is_create_complete shall return true. ]*/
             result = true;
         }
     }
@@ -149,29 +149,29 @@ bool dns_async_is_lookup_complete(DNS_ASYNC_HANDLE dns_in)
     return result;
 }
 
-void dns_async_destroy(DNS_ASYNC_HANDLE dns_in)
+void dns_resolver_destroy(DNSRESOLVER_HANDLE dns_in)
 {
-    DNS_ASYNC_INSTANCE* dns = (DNS_ASYNC_INSTANCE*)dns_in;
+    DNSRESOLVER_INSTANCE* dns = (DNSRESOLVER_INSTANCE*)dns_in;
     if (dns == NULL)
     {
-        /* Codes_SRS_DNS_ASYNC_30_050: [ If the dns parameter is NULL, dns_async_destroy shall log an error and do nothing. ]*/
+        /* Codes_SRS_dns_resolver_30_050: [ If the dns parameter is NULL, dns_resolver_destroy shall log an error and do nothing. ]*/
         LogError("NULL dns");
     }
     else
     {
-        /* Codes_SRS_DNS_ASYNC_30_051: [ dns_async_destroy shall delete all acquired resources and delete the DNS_ASYNC_HANDLE. ]*/
+        /* Codes_SRS_dns_resolver_30_051: [ dns_resolver_destroy shall delete all acquired resources and delete the DNSRESOLVER_HANDLE. ]*/
         free(dns->hostname);
         free(dns);
     }
 }
 
-uint32_t dns_async_get_ipv4(DNS_ASYNC_HANDLE dns_in)
+uint32_t dns_resolver_get_ipv4(DNSRESOLVER_HANDLE dns_in)
 {
-    DNS_ASYNC_INSTANCE* dns = (DNS_ASYNC_INSTANCE*)dns_in;
+    DNSRESOLVER_INSTANCE* dns = (DNSRESOLVER_INSTANCE*)dns_in;
     uint32_t result;
     if (dns == NULL)
     {
-        /* Codes_SRS_DNS_ASYNC_30_030: [ If the dns parameter is NULL, dns_async_get_ipv4 shall log an error and return 0. ]*/
+        /* Codes_SRS_dns_resolver_30_030: [ If the dns parameter is NULL, dns_resolver_get_ipv4 shall log an error and return 0. ]*/
         LogError("NULL dns");
         result = 0;
     }
@@ -181,19 +181,19 @@ uint32_t dns_async_get_ipv4(DNS_ASYNC_HANDLE dns_in)
         {
             if (dns->is_failed)
             {
-                /* Codes_SRS_DNS_ASYNC_30_033: [ If dns_async_is_create_complete has returned true and the lookup process has failed, dns_async_get_ipv4 shall return 0. ]*/
+                /* Codes_SRS_dns_resolver_30_033: [ If dns_resolver_is_create_complete has returned true and the lookup process has failed, dns_resolver_get_ipv4 shall return 0. ]*/
                 result = 0;
             }
             else
             {
-                /* Codes_SRS_DNS_ASYNC_30_032: [ If dns_async_is_create_complete has returned true and the lookup process has succeeded, dns_async_get_ipv4 shall return the discovered IPv4 address. ]*/
+                /* Codes_SRS_dns_resolver_30_032: [ If dns_resolver_is_create_complete has returned true and the lookup process has succeeded, dns_resolver_get_ipv4 shall return the discovered IPv4 address. ]*/
                 result = dns->ip_v4;
             }
         }
         else
         {
-            /* Codes_SRS_DNS_ASYNC_30_031: [ If dns_async_is_create_complete has not yet returned true, dns_async_get_ipv4 shall log an error and return 0. ]*/
-            LogError("dns_async_get_ipv4 when not complete");
+            /* Codes_SRS_dns_resolver_30_031: [ If dns_resolver_is_create_complete has not yet returned true, dns_resolver_get_ipv4 shall log an error and return 0. ]*/
+            LogError("dns_resolver_get_ipv4 when not complete");
             result = 0;
         }
     }

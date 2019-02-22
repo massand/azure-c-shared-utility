@@ -3,14 +3,14 @@
 
 cmake_minimum_required(VERSION 2.8.11)
 
-set(theseTestsName dns_async_ut)
+set(theseTestsName dns_resolver_ut)
 
 set(${theseTestsName}_test_files
 ${theseTestsName}.c
 )
 
 set(${theseTestsName}_c_files
-../../pal/dns_async.c
+../../pal/dns_resolver_sync.c
 ../../src/crt_abstractions.c
 )
 
