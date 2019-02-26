@@ -18,6 +18,7 @@
 #include "azure_c_shared_utility/optimize_size.h"
 #include "azure_c_shared_utility/shared_util_options.h"
 #include "azure_c_shared_utility/xlogging.h"
+#include "azure_c_shared_utility/dns_resolver.h"
 
 typedef enum IO_STATE_TAG
 {
@@ -50,6 +51,8 @@ typedef struct SOCKET_IO_INSTANCE_TAG
     SINGLYLINKEDLIST_HANDLE pending_io_list;
     struct tcp_keepalive keep_alive;
     unsigned char recv_bytes[RECEIVE_BYTES_VALUE];
+    DNSRESOLVER_HANDLE dns_resolver;
+    ADDRINFO* addrInfo;
 } SOCKET_IO_INSTANCE;
 
 /*this function will clone an option given by name and value*/
@@ -197,7 +200,11 @@ CONCRETE_IO_HANDLE socketio_create(void* io_create_parameters)
                 }
                 else
                 {
+                    result->addrInfo = calloc(1, sizeof(ADDRINFO));
+                    result->addrInfo->ai_addr = calloc(1, sizeof(struct sockaddr_in));
+
                     result->port = socket_io_config->port;
+                    result->dns_resolver = dns_resolver_create(result->hostname, result->port, NULL);
                     result->on_bytes_received = NULL;
                     result->on_io_error = NULL;
                     result->on_bytes_received_context = NULL;
@@ -247,6 +254,9 @@ void socketio_destroy(CONCRETE_IO_HANDLE socket_io)
             free(socket_io_instance->hostname);
         }
 
+        freeaddrinfo(socket_io_instance->addrInfo);
+        dns_resolver_destroy(socket_io_instance->dns_resolver);
+
         free(socket_io);
     }
 }
@@ -274,7 +284,26 @@ static int connect_socket(SOCKET socket, struct sockaddr* addr, size_t len)
     return result;
 }
 
-static int lookup_address_and_initiate_socket_connection(SOCKET_IO_INSTANCE* socket_io_instance)
+static int lookup_address(SOCKET_IO_INSTANCE* socket_io_instance)
+{
+    int result;
+    
+    if (!dns_resolver_is_lookup_complete(socket_io_instance->dns_resolver))
+    {
+        socket_io_instance->io_state = IO_STATE_OPENING;
+    }
+    else
+    {
+
+        socket_io_instance->io_state = IO_STATE_OPEN;
+    }
+
+    result = 0;
+
+    return result;
+}
+
+static int initiate_socket_connection(SOCKET_IO_INSTANCE* socket_io_instance)
 {
     int result;
 
@@ -282,28 +311,11 @@ static int lookup_address_and_initiate_socket_connection(SOCKET_IO_INSTANCE* soc
     if (socket_io_instance->address_type == ADDRESS_TYPE_IP)
     {
 #endif
-        char portString[16];
-        ADDRINFO* addr_info = NULL;
-        ADDRINFO addrHint = { 0 };
-        addrHint.ai_family = AF_INET;
-        addrHint.ai_socktype = SOCK_STREAM;
-        addrHint.ai_protocol = 0;
+        struct addrinfo* addr = dns_resolver_get_addrInfo(socket_io_instance->dns_resolver);
+        memcpy((socket_io_instance->addrInfo)->ai_addr, addr, sizeof(*((socket_io_instance->addrInfo)->ai_addr)));
 
-        if (sprintf(portString, "%u", socket_io_instance->port) < 0)
-        {
-            LogError("Failure: sprintf failed to encode the port.");
-            result = __FAILURE__;
-        }
-        else if (getaddrinfo(socket_io_instance->hostname, portString, &addrHint, &addr_info) != 0)
-        {
-            LogError("Failure: getaddrinfo failure %d.", WSAGetLastError());
-            result = __FAILURE__;
-        }
-        else
-        {
-            result = connect_socket(socket_io_instance->socket, addr_info->ai_addr, sizeof(*addr_info->ai_addr));
-            freeaddrinfo(addr_info);
-        }
+        result = connect_socket(socket_io_instance->socket, (socket_io_instance->addrInfo)->ai_addr, sizeof(*((socket_io_instance->addrInfo)->ai_addr)));
+            
 #ifdef AF_UNIX_ON_WINDOWS
     }
     else // ADDRESS_TYPE_DOMAIN_SOCKET
@@ -385,7 +397,12 @@ int socketio_open(CONCRETE_IO_HANDLE socket_io, ON_IO_OPEN_COMPLETE on_io_open_c
                 LogError("Failure: socket create failure %d.", WSAGetLastError());
                 result = __FAILURE__;
             }
-            else if (lookup_address_and_initiate_socket_connection(socket_io_instance) != 0)
+            else if (lookup_address(socket_io_instance) != 0)
+            {
+                socket_io_instance->io_state = IO_STATE_OPENING;
+                result = 0;
+            }
+            else if (initiate_socket_connection(socket_io_instance) != 0)
             {
                 LogError("lookup_address_and_connect_socket failed");
                 (void)closesocket(socket_io_instance->socket);

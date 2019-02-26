@@ -27,12 +27,14 @@
 typedef struct
 {
     char* hostname;
+    int port;
     uint32_t ip_v4;
     bool is_complete;
     bool is_failed;
+    struct addrinfo* addrInfo;
 } DNSRESOLVER_INSTANCE;
 
-DNSRESOLVER_HANDLE dns_resolver_create(const char* hostname, DNSRESOLVER_OPTIONS* options)
+DNSRESOLVER_HANDLE dns_resolver_create(const char* hostname, int port, DNSRESOLVER_OPTIONS* options)
 {
     /* Codes_SRS_dns_resolver_30_012: [ The optional options parameter shall be ignored. ]*/
     DNSRESOLVER_INSTANCE* result;
@@ -58,6 +60,7 @@ DNSRESOLVER_HANDLE dns_resolver_create(const char* hostname, DNSRESOLVER_OPTIONS
             result->is_complete = false;
             result->is_failed = false;
             result->ip_v4 = 0;
+            result->port = port;
             /* Codes_SRS_dns_resolver_30_010: [ dns_resolver_create shall make a copy of the hostname parameter to allow immediate deletion by the caller. ]*/
             ms_result = mallocAndStrcpy_s(&result->hostname, hostname);
             if (ms_result != 0)
@@ -92,6 +95,7 @@ bool dns_resolver_is_lookup_complete(DNSRESOLVER_HANDLE dns_in)
         }
         else
         {
+            char portString[16];
             struct addrinfo *addrInfo = NULL;
             struct addrinfo *ptr = NULL;
             struct addrinfo hints;
@@ -115,6 +119,12 @@ bool dns_resolver_is_lookup_complete(DNSRESOLVER_HANDLE dns_in)
             // the result variable will hold a linked list
             // of addrinfo structures containing response
             // information
+            if (sprintf(portString, "%u", dns->port) < 0)
+            {
+                LogError("Failure: sprintf failed to encode the port.");
+                result = __FAILURE__;
+            }
+
             getAddrResult = getaddrinfo(dns->hostname, NULL, &hints, &addrInfo);
             if (getAddrResult == 0)
             {
@@ -126,12 +136,13 @@ bool dns_resolver_is_lookup_complete(DNSRESOLVER_HANDLE dns_in)
                     case AF_INET:
                         /* Codes_SRS_dns_resolver_30_032: [ If dns_resolver_is_create_complete has returned true and the lookup process has succeeded, dns_resolver_get_ipv4 shall return the discovered IPv4 address. ]*/
                         dns->ip_v4 = EXTRACT_IPV4(ptr);
+                        dns->addrInfo = ptr;
                         break;
                     }
                 }
                 /* Codes_SRS_dns_resolver_30_033: [ If dns_resolver_is_create_complete has returned true and the lookup process has failed, dns_resolver_get_ipv4 shall return 0. ]*/
                 dns->is_failed = (dns->ip_v4 == 0);
-                freeaddrinfo(addrInfo);
+                //freeaddrinfo(addrInfo);
             }
             else
             {
@@ -160,6 +171,7 @@ void dns_resolver_destroy(DNSRESOLVER_HANDLE dns_in)
     else
     {
         /* Codes_SRS_dns_resolver_30_051: [ dns_resolver_destroy shall delete all acquired resources and delete the DNSRESOLVER_HANDLE. ]*/
+        //freeaddrinfo(dns->addrInfo);
         free(dns->hostname);
         free(dns);
     }
@@ -195,6 +207,41 @@ uint32_t dns_resolver_get_ipv4(DNSRESOLVER_HANDLE dns_in)
             /* Codes_SRS_dns_resolver_30_031: [ If dns_resolver_is_create_complete has not yet returned true, dns_resolver_get_ipv4 shall log an error and return 0. ]*/
             LogError("dns_resolver_get_ipv4 when not complete");
             result = 0;
+        }
+    }
+    return result;
+}
+
+struct addrinfo* dns_resolver_get_addrInfo(DNSRESOLVER_HANDLE dns_in)
+{
+    DNSRESOLVER_INSTANCE* dns = (DNSRESOLVER_INSTANCE*)dns_in;
+    struct addrinfo* result;
+    if (dns == NULL)
+    {
+        /* Codes_SRS_dns_resolver_30_030: [ If the dns parameter is NULL, dns_resolver_get_ipv4 shall log an error and return 0. ]*/
+        LogError("NULL dns");
+        result = NULL;
+    }
+    else
+    {
+        if (dns->is_complete)
+        {
+            if (dns->is_failed)
+            {
+                /* Codes_SRS_dns_resolver_30_033: [ If dns_resolver_is_create_complete has returned true and the lookup process has failed, dns_resolver_get_ipv4 shall return 0. ]*/
+                result = NULL;
+            }
+            else
+            {
+                /* Codes_SRS_dns_resolver_30_032: [ If dns_resolver_is_create_complete has returned true and the lookup process has succeeded, dns_resolver_get_ipv4 shall return the discovered IPv4 address. ]*/
+                result = dns->addrInfo;
+            }
+        }
+        else
+        {
+            /* Codes_SRS_dns_resolver_30_031: [ If dns_resolver_is_create_complete has not yet returned true, dns_resolver_get_ipv4 shall log an error and return 0. ]*/
+            LogError("dns_resolver_get_ipv4 when not complete");
+            result = NULL;
         }
     }
     return result;

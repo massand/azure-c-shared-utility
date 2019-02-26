@@ -27,7 +27,7 @@ extern "C" {
     *
     * @return    @c The newly created DNSRESOLVER_HANDLE.
     */
-    MOCKABLE_FUNCTION(, DNSRESOLVER_HANDLE, dns_resolver_create, const char*, hostname, DNSRESOLVER_OPTIONS*, options);
+    MOCKABLE_FUNCTION(, DNSRESOLVER_HANDLE, dns_resolver_create, const char*, hostname, int, port, DNSRESOLVER_OPTIONS*, options);
 
     /**
     * @brief    Continue the lookup process and report its completion state. Must be polled repeatedly for completion.
@@ -46,6 +46,16 @@ extern "C" {
     * @return    @c A uint32_t IPv4 address. 0 indicates failure or not finished.
     */
     MOCKABLE_FUNCTION(, uint32_t, dns_resolver_get_ipv4, DNSRESOLVER_HANDLE, dns);
+
+    /**
+    * @brief    Return the addrInfo of a completed lookup process. Call only after dns_resolver_is_lookup_complete indicates completion.
+    *
+    * @param   dns    The DNSRESOLVER_HANDLE.
+    *
+    * @return    @c A struct addrinfo. 0 indicates failure or not finished.
+    */
+    MOCKABLE_FUNCTION(, struct addrinfo*, dns_resolver_get_addrInfo, DNSRESOLVER_HANDLE, dns);
+    
 
     /**
     * @brief    Destroy the module.
