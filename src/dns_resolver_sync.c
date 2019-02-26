@@ -125,7 +125,7 @@ bool dns_resolver_is_lookup_complete(DNSRESOLVER_HANDLE dns_in)
                 result = __FAILURE__;
             }
 
-            getAddrResult = getaddrinfo(dns->hostname, NULL, &hints, &addrInfo);
+            getAddrResult = getaddrinfo(dns->hostname, portString, &hints, &addrInfo);
             if (getAddrResult == 0)
             {
                 // If we find the AF_INET address, use it as the return value
