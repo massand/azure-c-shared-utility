@@ -29,6 +29,7 @@ option(use_builtin_httpapi "set use_builtin_httpapi to ON to use the built-in ht
 option(use_cppunittest "set use_cppunittest to ON to build CppUnitTest tests on Windows (default is ON)" ON)
 option(suppress_header_searches "do not try to find headers - used when compiler check will fail" OFF)
 option(use_custom_heap "use externally defined heap functions instead of the malloc family" OFF)
+option(use_async_dns "use external libraries to achieve asynchronous name resolution" OFF)
 
 if(${use_custom_heap})
     add_definitions(-DGB_USE_CUSTOM_HEAP)
@@ -107,6 +108,7 @@ endif()
 if(${no_logging})
     add_definitions(-DNO_LOGGING)
 endif()
+
 # Start of variables used during install
 set (LIB_INSTALL_DIR lib CACHE PATH "Library object file directory")
 
@@ -535,6 +537,12 @@ if(LINUX)
             set(aziotsharedutil_target_libs ${aziotsharedutil_target_libs} uuid)
         endif()
     endif()
+endif()
+
+if(${use_async_dns})
+    #find_package(c-ares REQUIRED) #not required on windows with vcpkg; test on linux if it finds config
+    include_directories(${CARES_INCLUDE_DIR}) #check if this is automatically derived var
+    set(aziotsharedutil_target_libs ${aziotsharedutil_target_libs} cares)
 endif()
 
 target_link_libraries(aziotsharedutil ${aziotsharedutil_target_libs})
