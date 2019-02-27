@@ -112,7 +112,7 @@ bool dns_resolver_is_lookup_complete(DNSRESOLVER_HANDLE dns_in)
             memset(&hints, 0, sizeof(hints));
             hints.ai_family = AF_INET;
             hints.ai_socktype = SOCK_STREAM;
-            hints.ai_protocol = IPPROTO_TCP;
+            hints.ai_protocol = 0;
 
             //--------------------------------
             // Call getaddrinfo(). If the call succeeds,
@@ -136,7 +136,7 @@ bool dns_resolver_is_lookup_complete(DNSRESOLVER_HANDLE dns_in)
                     case AF_INET:
                         /* Codes_SRS_dns_resolver_30_032: [ If dns_resolver_is_create_complete has returned true and the lookup process has succeeded, dns_resolver_get_ipv4 shall return the discovered IPv4 address. ]*/
                         dns->ip_v4 = EXTRACT_IPV4(ptr);
-                        dns->addrInfo = ptr;
+                        memcpy(&(dns->addrInfo), &addrInfo, sizeof(*(dns->addrInfo)));
                         break;
                     }
                 }
