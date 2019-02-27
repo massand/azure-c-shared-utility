@@ -43,8 +43,10 @@ typedef struct SOCKET_IO_INSTANCE_TAG
     SOCKETIO_ADDRESS_TYPE address_type;
     ON_BYTES_RECEIVED on_bytes_received;
     ON_IO_ERROR on_io_error;
+    ON_IO_OPEN_COMPLETE on_io_open_complete;
     void* on_bytes_received_context;
     void* on_io_error_context;
+    void* on_io_open_complete_context;
     char* hostname;
     int port;
     IO_STATE io_state;
@@ -149,6 +151,29 @@ static int add_pending_io(SOCKET_IO_INSTANCE* socket_io_instance, const unsigned
     return result;
 }
 
+static int connect_socket(SOCKET socket, struct sockaddr* addr, size_t len)
+{
+    int result;
+    u_long iMode = 1;
+
+    if (connect(socket, addr, (int)len) != 0)
+    {
+        LogError("Failure: connect failure %d.", WSAGetLastError());
+        result = __FAILURE__;
+    }
+    else if (ioctlsocket(socket, FIONBIO, &iMode) != 0)
+    {
+        LogError("Failure: ioctlsocket failure %d.", WSAGetLastError());
+        result = __FAILURE__;
+    }
+    else
+    {
+        result = 0;
+    }
+
+    return result;
+}
+
 CONCRETE_IO_HANDLE socketio_create(void* io_create_parameters)
 {
     SOCKETIO_CONFIG* socket_io_config = (SOCKETIO_CONFIG*)io_create_parameters;
@@ -204,6 +229,7 @@ CONCRETE_IO_HANDLE socketio_create(void* io_create_parameters)
                     result->addrInfo->ai_addr = calloc(1, sizeof(struct sockaddr_in));
 
                     result->port = socket_io_config->port;
+                    result->on_io_open_complete = NULL;
                     result->dns_resolver = dns_resolver_create(result->hostname, result->port, NULL);
                     result->on_bytes_received = NULL;
                     result->on_io_error = NULL;
@@ -261,29 +287,6 @@ void socketio_destroy(CONCRETE_IO_HANDLE socket_io)
     }
 }
 
-static int connect_socket(SOCKET socket, struct sockaddr* addr, size_t len)
-{
-    int result;
-    u_long iMode = 1;
-
-    if (connect(socket, addr, (int)len) != 0)
-    {
-        LogError("Failure: connect failure %d.", WSAGetLastError());
-        result = __FAILURE__;
-    }
-    else if (ioctlsocket(socket, FIONBIO, &iMode) != 0)
-    {
-        LogError("Failure: ioctlsocket failure %d.", WSAGetLastError());
-        result = __FAILURE__;
-    }
-    else
-    {
-        result = 0;
-    }
-
-    return result;
-}
-
 static int lookup_address(SOCKET_IO_INSTANCE* socket_io_instance)
 {
     int result;
@@ -315,6 +318,18 @@ static int initiate_socket_connection(SOCKET_IO_INSTANCE* socket_io_instance)
         memcpy(&(socket_io_instance->addrInfo), &addr, sizeof(*(socket_io_instance->addrInfo)));
 
         result = connect_socket(socket_io_instance->socket, (socket_io_instance->addrInfo)->ai_addr, sizeof(*((socket_io_instance->addrInfo)->ai_addr)));
+        if(result != 0)
+        {
+            LogError("connect_socket failed");
+        }
+        else 
+        {
+            socket_io_instance->io_state = IO_STATE_OPEN;
+            if (socket_io_instance->on_io_open_complete != NULL)
+            {
+                socket_io_instance->on_io_open_complete(socket_io_instance->on_io_open_complete_context, IO_OPEN_OK /*: IO_OPEN_ERROR*/);
+            }
+        }
             
 #ifdef AF_UNIX_ON_WINDOWS
     }
@@ -348,6 +363,19 @@ static int initiate_socket_connection(SOCKET_IO_INSTANCE* socket_io_instance)
             (void)memcpy(addr_un.sun_path, path, path_len);
 
             result = connect_socket(socket_io_instance->socket, (struct sockaddr*)&addr_un, sizeof(addr_un));
+            if (result != 0)
+            {
+                LogError("connect_socket failed");
+                result = __FAILURE__;
+            }
+            else
+            {
+                socket_io_instance->io_state = IO_STATE_OPEN;
+                if (socket_io_instance->on_io_open_complete != NULL)
+                {
+                    socket_io_instance->on_io_open_complete(socket_io_instance->on_io_open_complete_context, IO_OPEN_OK /*: IO_OPEN_ERROR*/);
+                }
+            }
         }
     }
 #endif
@@ -379,6 +407,8 @@ int socketio_open(CONCRETE_IO_HANDLE socket_io, ON_IO_OPEN_COMPLETE on_io_open_c
             socket_io_instance->on_bytes_received = on_bytes_received;
             socket_io_instance->on_io_error = on_io_error;
             socket_io_instance->on_io_error_context = on_io_error_context;
+            socket_io_instance->on_io_open_complete = on_io_open_complete;
+            socket_io_instance->on_io_open_complete_context = on_io_open_complete_context;
 
             socket_io_instance->io_state = IO_STATE_OPEN;
 
@@ -399,34 +429,36 @@ int socketio_open(CONCRETE_IO_HANDLE socket_io, ON_IO_OPEN_COMPLETE on_io_open_c
             }
             else if (lookup_address(socket_io_instance) != 0)
             {
-                socket_io_instance->io_state = IO_STATE_OPENING;
+                //TODO: Log c-ares error?
+                //LogError("Failure: socket create failure %d.", WSAGetLastError());
+                result = __FAILURE__;
+            }
+            else if (socket_io_instance->io_state == IO_STATE_OPENING)
+            {
+                //TODO: Figure out appropriate location to assign these - should always assign these pointers
+                socket_io_instance->on_bytes_received_context = on_bytes_received_context;
+                socket_io_instance->on_bytes_received = on_bytes_received;
+                socket_io_instance->on_io_error = on_io_error;
+                socket_io_instance->on_io_error_context = on_io_error_context;
+                socket_io_instance->on_io_open_complete = on_io_open_complete;
+                socket_io_instance->on_io_open_complete_context = on_io_open_complete_context;
                 result = 0;
             }
             else if (initiate_socket_connection(socket_io_instance) != 0)
             {
-                LogError("lookup_address_and_connect_socket failed");
+                LogError("initiate_socket_connection failed");
                 (void)closesocket(socket_io_instance->socket);
                 socket_io_instance->socket = INVALID_SOCKET;
                 result = __FAILURE__;
             }
             else
             {
-                socket_io_instance->on_bytes_received_context = on_bytes_received_context;
-                socket_io_instance->on_bytes_received = on_bytes_received;
-                socket_io_instance->on_io_error = on_io_error;
-                socket_io_instance->on_io_error_context = on_io_error_context;
-
                 socket_io_instance->io_state = IO_STATE_OPEN;
-
                 result = 0;
             }
         }
     }
 
-    if (on_io_open_complete != NULL)
-    {
-        on_io_open_complete(on_io_open_complete_context, result == 0 ? IO_OPEN_OK : IO_OPEN_ERROR);
-    }
 
     return result;
 }
@@ -450,6 +482,8 @@ int socketio_close(CONCRETE_IO_HANDLE socket_io, ON_IO_CLOSE_COMPLETE on_io_clos
             (void)closesocket(socket_io_instance->socket);
             socket_io_instance->socket = INVALID_SOCKET;
             socket_io_instance->io_state = IO_STATE_CLOSED;
+
+            socket_io_instance->dns_resolver = NULL;
         }
         if (on_io_close_complete != NULL)
         {
@@ -622,6 +656,23 @@ void socketio_dowork(CONCRETE_IO_HANDLE socket_io)
                         }
                     }
                 } while (received > 0 && socket_io_instance->io_state == IO_STATE_OPEN);
+            }
+        }
+        else
+        {
+            if (lookup_address(socket_io_instance) != 0)
+            {
+                LogError("lookup_address_and_connect_socket failed");
+                (void)closesocket(socket_io_instance->socket);
+                socket_io_instance->socket = INVALID_SOCKET;
+                socket_io_instance->io_state = IO_STATE_CLOSED;
+            }
+            else if (socket_io_instance->io_state == IO_STATE_OPEN && initiate_socket_connection(socket_io_instance) != 0)
+            {
+                LogError("lookup_address_and_connect_socket failed");
+                (void)closesocket(socket_io_instance->socket);
+                socket_io_instance->socket = INVALID_SOCKET;
+                socket_io_instance->io_state = IO_STATE_CLOSED;
             }
         }
     }
