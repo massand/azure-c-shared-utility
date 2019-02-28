@@ -63,6 +63,7 @@ DNSRESOLVER_HANDLE dns_resolver_create(const char* hostname, int port, DNSRESOLV
             int ms_result;
             result->is_complete = false;
             result->is_failed = false;
+            result->in_progress = false;
             result->ip_v4 = 0;
             result->port = port;
             /* Codes_SRS_dns_resolver_30_010: [ dns_resolver_create shall make a copy of the hostname parameter to allow immediate deletion by the caller. ]*/
@@ -161,7 +162,7 @@ static void query_completed_cb(void *arg, int status, int timeouts, struct hoste
         prevai = ai;
     }
 
-    memcpy((dns->addrInfo)->ai_addr, firstai->ai_addr, sizeof(firstai->ai_addr));
+    memcpy(&((dns->addrInfo)->ai_addr), &(firstai->ai_addr), sizeof(*((dns->addrInfo)->ai_addr)));
     dns->is_complete = true;
     dns->in_progress = false;
 
